@@ -110,6 +110,9 @@ START_BYTE_RESP = 0xbb
 READ = 0x01
 WRITE = 0x00
 
+#TODO Shouldn't be a global
+read_stamp = rospy.Time(0.0)
+
 # Read data from IMU
 def read_from_dev(ser, reg_addr, length):
     buf_out = bytearray()
@@ -120,6 +123,7 @@ def read_from_dev(ser, reg_addr, length):
 
     try:
         ser.write(buf_out)
+        read_stamp = rospy.Time.now()
         buf_in = bytearray(ser.read(2 + length))
 
         # print("Reading, wr: ", binascii.hexlify(buf_out), "  re: ", binascii.hexlify(buf_in))
@@ -167,17 +171,17 @@ if __name__ == '__main__':
     rospy.init_node("bosch_imu_node")
 
     # Sensor measurements publishers
-    pub_data = rospy.Publisher('imu/data', Imu, queue_size=1)
-    pub_raw = rospy.Publisher('imu/raw', Imu, queue_size=1)
-    pub_mag = rospy.Publisher('imu/mag', MagneticField, queue_size=1)
-    pub_temp = rospy.Publisher('imu/temp', Temperature, queue_size=1)
+    pub_data = rospy.Publisher('imu/data', Imu, queue_size=10)
+    pub_raw = rospy.Publisher('imu/raw', Imu, queue_size=10)
+    pub_mag = rospy.Publisher('imu/mag', MagneticField, queue_size=10)
+    pub_temp = rospy.Publisher('imu/temp', Temperature, queue_size=10)
 
     # srv = Server(imuConfig, reconfig_callback)  # define dynamic_reconfigure callback
 
     # Get parameters values
     port = rospy.get_param('~port', '/dev/ttyUSB0')
     frame_id = rospy.get_param('~frame_id', 'imu_link')
-    frequency = rospy.get_param('frequency', 100)
+    frequency = rospy.get_param('~frequency', 100)
     operation_mode = rospy.get_param('operation_mode', OPER_MODE_NDOF)
 
     # Open serial port
@@ -216,11 +220,13 @@ if __name__ == '__main__':
     if not(write_to_dev(ser, AXIS_MAP_SIGN, 1, 0x06)):
         rospy.logerr("Unable to set IMU axis signs.")
 
-    if not(write_to_dev(ser, OPER_MODE, 1, OPER_MODE_NDOF)):
+    rospy.loginfo("Setting operation mode to %d...", operation_mode)
+    if not(write_to_dev(ser, OPER_MODE, 1, operation_mode)): # OPER_MODE_NDOF)):
         rospy.logerr("Unable to set IMU operation mode into operation mode.")
 
     rospy.loginfo("Bosch BNO055 IMU configuration complete.")
 
+    rospy.loginfo("Polling at rate %d...", frequency)
     rate = rospy.Rate(frequency)
 
     # Factors for unit conversions
@@ -233,7 +239,7 @@ if __name__ == '__main__':
         buf = read_from_dev(ser, ACCEL_DATA, 45)
         if buf != 0:
             # Publish raw data
-            imu_raw.header.stamp = rospy.Time.now()
+            imu_raw.header.stamp = read_stamp
             imu_raw.header.frame_id = frame_id
             imu_raw.header.seq = seq
             imu_raw.orientation_covariance[0] = -1
@@ -251,7 +257,7 @@ if __name__ == '__main__':
             #                  imu_data.linear_acceleration.y, imu_data.linear_acceleration.z, ")")
 
             # Publish filtered data
-            imu_data.header.stamp = rospy.Time.now()
+            imu_data.header.stamp = read_stamp
             imu_data.header.frame_id = frame_id
             imu_data.header.seq = seq
             imu_data.orientation.w = float(st.unpack('h', st.pack('BB', buf[24], buf[25]))[0])
@@ -269,7 +275,7 @@ if __name__ == '__main__':
             pub_data.publish(imu_data)
 
             # Publish magnetometer data
-            mag_msg.header.stamp = rospy.Time.now()
+            mag_msg.header.stamp = read_stamp
             mag_msg.header.frame_id = frame_id
             mag_msg.header.seq = seq
             mag_msg.magnetic_field.x = float(st.unpack('h', st.pack('BB', buf[6], buf[7]))[0]) / mag_fact
@@ -278,7 +284,7 @@ if __name__ == '__main__':
             pub_mag.publish(mag_msg)
 
             # Publish temperature
-            temperature_msg.header.stamp = rospy.Time.now()
+            temperature_msg.header.stamp = read_stamp
             temperature_msg.header.frame_id = frame_id
             temperature_msg.header.seq = seq
             temperature_msg.temperature = buf[44]
