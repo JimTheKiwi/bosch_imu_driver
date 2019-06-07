@@ -121,6 +121,7 @@ def read_from_dev(ser, reg_addr, length):
     buf_out.append(reg_addr)
     buf_out.append(length)
 
+    global read_stamp
     try:
         ser.write(buf_out)
         read_stamp = rospy.Time.now()
